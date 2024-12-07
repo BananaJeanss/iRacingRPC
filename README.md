@@ -7,7 +7,6 @@
 ![GitHub Repo stars](https://img.shields.io/github/stars/outdateddev/iracingrpc?style=flat-square&color=lightyellow)
 ![GitHub contributors](https://img.shields.io/github/contributors/outdateddev/iRacingRPC?style=flat-square)
 
-
 # iRacing Rich Presence
 
 Discord Rich Presence for iRacing sessions using python.

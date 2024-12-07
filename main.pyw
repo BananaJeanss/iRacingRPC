@@ -1,20 +1,42 @@
 import time
+import atexit
+import os
+import sys
 import threading
+import json
+import tkinter as tk
+from tkinter import ttk
 from pypresence import Presence
 from pystray import MenuItem as item, Icon, Menu
 from PIL import Image
-import tkinter as tk
 from notifypy import Notify
-from tkinter import ttk
-import json
 import irsdk
 
-# Initialize default settings
+notification = Notify()
+
+# Check if the script is already running, if not create a lock file.
+lock_file = "irpc.lock"
+if os.path.isfile(lock_file):
+    print("iRacing Discord Rich Presence is already running.")
+    notification.title = "iRacing Rich Presence"
+    notification.message = "iRacing Discord Rich Presence is already running, if this is a mistake check the lock file."
+    notification.icon = "assets/logo.png"
+    notification.send()
+    sys.exit()
+else:
+    with open(lock_file, "w") as f:
+        f.write(
+            "iRacing Discord Rich Presence lock file. This will be deleted on exit.\n"
+            "If this still exists after closing the script, delete it manually."
+        )
+
+# Default settings
 interval = 1
 display_idle = True
 display_github = True
 
 # Settings
+startup_errors = []  # List messages, show on startup notification.
 try:
     settings_file = "settings.json"
     with open(settings_file, "r") as json_file:
@@ -33,8 +55,12 @@ except FileNotFoundError:  # create new settings.json
         print(
             "Settings file not found, creating new settings file with default settings."
         )
+        startup_errors.append(
+            "Settings file not found. Created new file with default settings."
+        )
 except Exception as e:
     print(f"Error loading settings: {e}, resorting to default settings")
+    startup_errors.append(f"Error loading settings, resorting to default settings.")
 
 stop_event = threading.Event()
 
@@ -52,7 +78,6 @@ initial_total_time = None
 
 # Updating the RPC
 def update_presence():
-    global initial_total_time
 
     while not stop_event.is_set():
         try:
@@ -78,7 +103,9 @@ def update_presence():
                 display_total_time = (
                     initial_total_time if initial_total_time else total_time
                 )
-                position = irsdk_obj["PlayerCarPosition"] or "--"
+                position = (
+                    irsdk_obj["PlayerCarPosition"] or "--"
+                )  # If no position is set, display P--
                 track = irsdk_obj["WeekendInfo"]["TrackDisplayName"]
 
                 if total_laps is None:
@@ -101,7 +128,7 @@ def update_presence():
                 else:
                     statetext = f"P{position} | {lap_num} of {total_laps} | {carname}"
 
-                if display_github:
+                if display_github:  # changed in settings.json
                     largetexttext = "https://github.com/OutdatedDev/iRacingRPC"
                 else:
                     largetexttext = "iRacing"
@@ -125,7 +152,7 @@ def update_presence():
                 RPC.update(
                     details="Idle",
                     large_image="iracing",
-                    buttons=[
+                    buttons=[  # Buttons tend to not appear on discord, unless you're hovering your mouse over a voice channel or are on mobile.
                         {
                             "label": "View on GitHub",
                             "url": "https://github.com/Outdateddev/iRacingRPC",
@@ -152,14 +179,33 @@ def iracing_status_check():
         time.sleep(5)
 
 
-# Tray Icons
+# Quit function
+quitstate = 0  # 0 if not quitting via tray, 1 if quitting via tray preventing atexit from running
+
+
 def on_quit(icon):
-    stop_event.set()
+    global quitstate
+    quitstate = 1
     RPC.close()
+    stop_event.set()
     icon.stop()
-    print("RPC Closing")
+    os.remove(lock_file)
+    print("iRPC has closed successfully")
+    notification.title = "iRacing Rich Presence"
+    notification.message = "iRPC Closing"
+    notification.icon = "assets/logo.png"
+    notification.send()
 
 
+def exit_handler():
+    if quitstate == 0:
+        on_quit(icon)
+
+
+atexit.register(exit_handler)
+
+
+# Tray Icons
 def set_interval(new_interval):
     global interval
     interval = new_interval
@@ -226,7 +272,14 @@ def settings_window():
     threading.Thread(target=settings_thread).start()
 
 
-icon = Icon("iRacingRP", Image.open("main.ico"), "iRacing Discord Rich Presence")
+try:
+    icon_image = Image.open("main.ico")
+except FileNotFoundError:
+    print("Icon file not found.")
+    startup_errors.append("Icon file not found.")
+    icon_image = None
+
+icon = Icon("iRacingRP", icon_image, "iRacing Discord Rich Presence")
 menu_items = [item("Settings", lambda: settings_window()), item("Quit", on_quit)]
 
 icon.menu = Menu(*menu_items)
@@ -240,9 +293,14 @@ status_thread.daemon = True
 status_thread.start()
 
 # Run
-notification = Notify()
 notification.title = "iRacing Rich Presence"
-notification.message = "Running in system tray, right click to access settings."
+if startup_errors:  # If there are any startup errors, display them in the notification.
+    notification.message = (
+        " ".join(startup_errors)
+        + " Running in system tray, right click to access settings."
+    )
+else:
+    notification.message = "Running in system tray, right click to access settings."
 notification.icon = "assets/logo.png"
 
 notification.send()
