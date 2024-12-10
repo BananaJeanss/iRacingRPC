@@ -269,7 +269,7 @@ def settings_window():
             settings.iconbitmap("main.ico")
         except Exception as e:
             print(f"Error loading icon: {e}")
-        settings.geometry("400x300")
+        settings.geometry("400x350")
         settings.resizable(False, False)
 
         # Styling
