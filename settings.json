@@ -1,5 +1,7 @@
 {
     "updateInterval": 1,
     "displayIdle": true,
-    "displayGithub": true
+    "displayGithub": true,
+    "CustomIdleText": "Idle in iRacing UI",
+    "EnableLock": true
 }

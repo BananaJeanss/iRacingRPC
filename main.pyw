@@ -6,6 +6,7 @@ import threading
 import json
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
 from pypresence import Presence
 from pystray import MenuItem as item, Icon, Menu
 from PIL import Image
@@ -14,26 +15,12 @@ import irsdk
 
 notification = Notify()
 
-# Check if the script is already running, if not create a lock file.
-lock_file = "irpc.lock"
-if os.path.isfile(lock_file):
-    print("iRacing Discord Rich Presence is already running.")
-    notification.title = "iRacing Rich Presence"
-    notification.message = "iRacing Discord Rich Presence is already running, if this is a mistake check the lock file."
-    notification.icon = "assets/logo.png"
-    notification.send()
-    sys.exit()
-else:
-    with open(lock_file, "w") as f:
-        f.write(
-            "iRacing Discord Rich Presence lock file. This will be deleted on exit.\n"
-            "If this still exists after closing the script, delete it manually."
-        )
-
 # Default settings
 interval = 1
 display_idle = True
 display_github = True
+EnableLock = False
+CustomIdleText = "Idle"
 
 # Settings
 startup_errors = []  # List messages, show on startup notification.
@@ -44,12 +31,16 @@ try:
     interval = settings.get("updateInterval", interval)
     display_idle = settings.get("displayIdle", display_idle)
     display_github = settings.get("displayGithub", display_github)
+    EnableLock = settings.get("EnableLock", EnableLock)
+    CustomIdleText = settings.get("CustomIdleText", CustomIdleText)
 except FileNotFoundError:  # create new settings.json
     with open(settings_file, "w") as json_file:
         settings = {
             "updateInterval": interval,
             "displayIdle": display_idle,
             "displayGithub": display_github,
+            "EnableLock": EnableLock,
+            "CustomIdleText": CustomIdleText,
         }
         json.dump(settings, json_file, indent=4)
         print(
@@ -61,6 +52,58 @@ except FileNotFoundError:  # create new settings.json
 except Exception as e:
     print(f"Error loading settings: {e}, resorting to default settings")
     startup_errors.append(f"Error loading settings, resorting to default settings.")
+
+
+# EnableLock function
+try:  # Psutil is optional to avoid unnecessary package installations
+    import psutil
+
+    psutil_installed = True
+except ImportError:
+    psutil_installed = False
+
+lock_file = "irpc.lock"
+if EnableLock:
+    if psutil_installed:
+        try:
+            if os.path.isfile(lock_file):
+                with open(lock_file, "r") as f:
+                    pid = int(f.read())
+
+                if psutil.pid_exists(pid):
+                    print("iRacing Discord Rich Presence is already running.")
+                    notification.title = "iRacing Rich Presence"
+                    notification.message = "iRacing Discord Rich Presence is already running, if this is a mistake check the lock file."
+                    notification.icon = "assets/logo.png"
+                    notification.send()
+                    sys.exit()
+                else:  # Remove previous lock file if the PID does not match
+                    os.remove(lock_file)
+
+            with open(lock_file, "w") as f:
+                f.write(str(os.getpid()))
+
+        except Exception as e:
+            print(f"Error creating or trying to access lock file: {e}")
+            startup_errors.append("An error happened with the lock file.")
+    else:  # Resort to just checking if the lock file exists.
+        try:
+            if os.path.isfile(lock_file):
+                print("iRacing Discord Rich Presence is already running.")
+                notification.title = "iRacing Rich Presence"
+                notification.message = "iRacing Discord Rich Presence is already running, if this is a mistake check the lock file."
+                notification.icon = "assets/logo.png"
+                notification.send()
+                sys.exit()
+            else:
+                with open(lock_file, "w") as f:
+                    f.write(
+                        "iRacing Discord Rich Presence lock file. This will be deleted on exit.\n"
+                        "If this still exists after closing the script, delete it manually."
+                    )
+        except Exception as e:
+            print(f"Error creating or trying to access lock file: {e}")
+            startup_errors.append(f"An error happened with the lock file.")
 
 stop_event = threading.Event()
 
@@ -96,6 +139,7 @@ def update_presence():
                     total_laps = None
                 elapsed_time = irsdk_obj["SessionTime"]
                 total_time = irsdk_obj["SessionTimeRemain"]
+                best_lap = irsdk_obj["LapBestLapTime"]
 
                 if total_time:
                     initial_total_time = total_time + elapsed_time
@@ -117,6 +161,9 @@ def update_presence():
                             "%H:%M:%S", time.gmtime(elapsed_time)
                         )
                         statetext = f"{elapsed_time} | {lap_num} laps | {carname}"
+                    elif state == "Time Attack":  # Time Attack enhancements
+                        best_lap = time.strftime("%H:%M:%S", time.gmtime(best_lap))
+                        statetext = f"Best Lap: {best_lap} | {lap_num} laps | {carname}"
                     else:
                         elapsed_time = time.strftime(
                             "%H:%M:%S", time.gmtime(elapsed_time)
@@ -126,14 +173,16 @@ def update_presence():
                         )
                         statetext = f"P{position} | {elapsed_time} of {display_total_time} | {carname}"
                 else:
-                    statetext = f"P{position} | {lap_num} of {total_laps} | {carname}"
+                    statetext = f"P{position} | {lap_num} of {total_laps} laps | {carname}"
 
                 if display_github:  # changed in settings.json
-                    largetexttext = "https://github.com/OutdatedDev/iRacingRPC"
+                    largetexttext = "https://github.com/BananaJeanss/iRacingRPC"
                 else:
                     largetexttext = "iRacing"
 
                 if sessiontype == state:
+                    details = f"{state} | {track}"
+                elif state == "Time Attack":
                     details = f"{state} | {track}"
                 else:
                     details = f"{state} - {sessiontype} | {track}"
@@ -146,16 +195,16 @@ def update_presence():
                 )
             elif display_idle:
                 if display_github:
-                    largetexttext = "https://github.com/OutdatedDev/iRacingRPC"
+                    largetexttext = "https://github.com/BananaJeanss/iRacingRPC"
                 else:
                     largetexttext = "iRacing"
                 RPC.update(
-                    details="Idle",
+                    details=CustomIdleText or "Idle",
                     large_image="iracing",
                     buttons=[  # Buttons tend to not appear on discord, unless you're hovering your mouse over a voice channel or are on mobile.
                         {
                             "label": "View on GitHub",
-                            "url": "https://github.com/Outdateddev/iRacingRPC",
+                            "url": "https://github.com/BananaJeanss/iRacingRPC",
                         }
                     ],
                 )
@@ -189,7 +238,8 @@ def on_quit(icon):
     RPC.close()
     stop_event.set()
     icon.stop()
-    os.remove(lock_file)
+    if os.path.exists(lock_file):
+        os.remove(lock_file)
     print("iRPC has closed successfully")
     notification.title = "iRacing Rich Presence"
     notification.message = "iRPC Closing"
@@ -215,7 +265,10 @@ def settings_window():
     def settings_thread():
         settings = tk.Tk()
         settings.title("iRacing RPC Settings")
-        settings.iconbitmap("main.ico")
+        try:
+            settings.iconbitmap("main.ico")
+        except Exception as e:
+            print(f"Error loading icon: {e}")
         settings.geometry("400x300")
         settings.resizable(False, False)
 
@@ -235,11 +288,18 @@ def settings_window():
         interval_entry.insert(0, interval)
         interval_entry.pack(pady=5)
 
+        custom_idle_label = ttk.Label(settings_frame, text="Custom Idle Text:")
+        custom_idle_label.pack(pady=5)
+        custom_idle_entry = ttk.Entry(settings_frame)
+        custom_idle_entry.insert(0, CustomIdleText)
+        custom_idle_entry.pack(pady=5)
+
         display_idle_var = tk.BooleanVar(value=display_idle)
         display_github_var = tk.BooleanVar(value=display_github)
+        lock_file_var = tk.BooleanVar(value=EnableLock)
 
         display_idle_checkbutton = ttk.Checkbutton(
-            settings_frame, text="Display even when idle", variable=display_idle_var
+            settings_frame, text="Display idle text", variable=display_idle_var
         )
         display_idle_checkbutton.pack(pady=5)
 
@@ -248,22 +308,34 @@ def settings_window():
         )
         display_github_checkbutton.pack(pady=5)
 
+        lock_file_checkbutton = ttk.Checkbutton(
+            settings_frame, text="Enable Lock File", variable=lock_file_var
+        )
+        lock_file_checkbutton.pack(pady=5)
+
+
         def save_settings():
             try:
-                global interval, display_idle, display_github
+                # Update the settings after saving.
+                global interval, display_idle, display_github, CustomIdleText
                 interval = int(interval_entry.get())
                 display_idle = display_idle_var.get()
                 display_github = display_github_var.get()
+                CustomIdleText = custom_idle_entry.get()
+                EnableLock = lock_file_var.get()
                 new_settings = {
                     "updateInterval": interval,
                     "displayIdle": display_idle,
                     "displayGithub": display_github,
+                    "CustomIdleText": CustomIdleText,
+                    "EnableLock": EnableLock
                 }
+                # Write to settings.json
                 with open(settings_file, "w") as json_file:
                     json.dump(new_settings, json_file, indent=4)
-                tk.messagebox.showinfo("Success", "Settings saved successfully!")
+                messagebox.showinfo("Success", "Settings saved successfully!")
             except Exception as e:
-                tk.messagebox.showerror("Error", f"Error saving settings: {e}")
+                messagebox.showerror("Error", f"Error saving settings: {e}")
 
         save_button = ttk.Button(settings_frame, text="Save", command=save_settings)
         save_button.pack(pady=20)
